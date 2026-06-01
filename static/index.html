@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>外呼任务对话 Agent 工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-mark">OA</div>
+          <div>
+            <h1>外呼工作台</h1>
+            <p>Agent Console</p>
+          </div>
+        </header>
+
+        <section class="panel task-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">TASK</span>
+              <h2>任务模板</h2>
+            </div>
+            <span id="taskCount" class="panel-meta">0</span>
+          </div>
+          <div id="taskList" class="task-list"></div>
+        </section>
+
+        <section class="panel setup-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">SETUP</span>
+              <h2>通话参数</h2>
+            </div>
+          </div>
+          <form id="variableForm" class="variable-form"></form>
+          <button id="startBtn" class="primary-btn" type="button">开始通话</button>
+        </section>
+
+        <section class="panel eval-control">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">EVALUATION</span>
+              <h2>自动评测</h2>
+            </div>
+          </div>
+          <p class="panel-note">模拟不同用户分支，量化评估任务达成、约束遵守和回复可靠性。</p>
+          <button id="runEvalBtn" class="ghost-btn full-btn" type="button">运行评测</button>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div class="task-summary">
+            <span class="eyebrow">ACTIVE TASK</span>
+            <h2 id="taskTitle">请选择任务</h2>
+            <p id="taskSubTitle">暂无任务内容</p>
+          </div>
+          <div class="session-state">
+            <span>当前状态</span>
+            <strong id="sessionStatus">未开始</strong>
+          </div>
+        </header>
+
+        <section class="call-board">
+          <div class="call-head">
+            <div>
+              <span class="eyebrow">TRANSCRIPT</span>
+              <h3>通话记录</h3>
+              <p id="callMeta">待开始</p>
+            </div>
+            <button id="exportBtn" class="ghost-btn" type="button" disabled>导出记录</button>
+          </div>
+          <div id="messages" class="messages"></div>
+          <div id="composerArea" class="composer-area" hidden>
+            <div id="quickReplies" class="quick-replies"></div>
+            <form id="messageForm" class="message-form">
+              <input id="messageInput" autocomplete="off" placeholder="输入对方回复" disabled />
+              <button id="sendBtn" type="submit" disabled>发送</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="evaluationBoard" class="evaluation-board" hidden>
+          <div class="evaluation-head">
+            <div>
+              <span class="eyebrow">REPORT</span>
+              <h3>自动评测报告</h3>
+              <p id="evaluationConclusion">等待运行评测</p>
+            </div>
+            <div class="score-card">
+              <span>总分</span>
+              <strong id="evaluationScore">-</strong>
+            </div>
+          </div>
+          <div id="dimensionList" class="dimension-list"></div>
+          <div id="scenarioList" class="scenario-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
