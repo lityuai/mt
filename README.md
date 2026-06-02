@@ -23,6 +23,15 @@
 - 自动化评测报告
   系统会逐轮驱动 Agent 对话，并统计任务覆盖、流程控制、约束遵守、回复可靠性等维度分数。
 
+- 企业级评测配置
+  支持快速评测、全量评测、压力评测三种范围；支持自定义任务覆盖、流程控制、约束遵守、可靠性等维度权重；支持设置优秀线和合格线。
+
+- 对比评测
+  支持规则基线与 LLM 模式对比，输出各模式分数、相对基线差异和对比结论。
+
+- 报告导出
+  前端可一键导出 Markdown 评测报告，报告包含总分、原始分、维度分、场景证据和失败项。
+
 - 可解释证据链
   每个评测场景都会保留用户输入、坐席回复、命中意图、状态变化和失败检查项，方便定位模型或规则没有遵循哪条指令。
 
@@ -170,6 +179,7 @@ POST /api/llm/test
 POST /api/sessions
 POST /api/sessions/{session_id}/messages
 POST /api/evaluations/run
+POST /api/evaluations/compare
 ```
 
 创建会话：
@@ -194,11 +204,37 @@ POST /api/evaluations/run
   "mode": "rule",
   "variables": {
     "rider_name": "张师傅"
+  },
+  "settings": {
+    "scope": "full",
+    "weights": {
+      "任务覆盖": 1.2,
+      "流程控制": 1.2,
+      "约束遵守": 1.0,
+      "可靠性": 1.4
+    },
+    "thresholds": {
+      "excellent": 90,
+      "pass": 75,
+      "risk": 60
+    }
   }
 }
 ```
 
 如果不传 `task_id`，评测器会对全部内置任务运行评测。
+
+对比评测：
+
+```json
+{
+  "task_id": "rider_flying_leg",
+  "modes": ["rule", "llm"],
+  "settings": {
+    "scope": "quick"
+  }
+}
+```
 
 ## 测试
 
@@ -213,6 +249,7 @@ python -m unittest discover -s tests
 - LLM 调用消息结构。
 - 模型配置脱敏。
 - 自动评测报告生成。
+- 企业级评测配置和对比评测报告。
 - HTTP 兼容模型接口调用。
 
 ## 文件结构

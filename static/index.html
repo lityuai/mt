@@ -43,11 +43,52 @@
           <div class="panel-head">
             <div>
               <span class="eyebrow">EVALUATION</span>
-              <h2>自动评测</h2>
+              <h2>评测配置</h2>
             </div>
           </div>
-          <p class="panel-note">模拟不同用户分支，量化评估任务达成、约束遵守和回复可靠性。</p>
-          <button id="runEvalBtn" class="ghost-btn full-btn" type="button">运行评测</button>
+          <div class="eval-form">
+            <label>
+              <span>评测范围</span>
+              <select id="evalScope">
+                <option value="quick">快速评测</option>
+                <option value="full" selected>全量评测</option>
+                <option value="stress">压力评测</option>
+              </select>
+            </label>
+            <div class="weight-grid" aria-label="维度权重">
+              <label>
+                <span>任务覆盖</span>
+                <input id="weightCoverage" type="number" min="0.1" step="0.1" value="1.2" />
+              </label>
+              <label>
+                <span>流程控制</span>
+                <input id="weightFlow" type="number" min="0.1" step="0.1" value="1.2" />
+              </label>
+              <label>
+                <span>约束遵守</span>
+                <input id="weightConstraint" type="number" min="0.1" step="0.1" value="1.0" />
+              </label>
+              <label>
+                <span>可靠性</span>
+                <input id="weightReliability" type="number" min="0.1" step="0.1" value="1.4" />
+              </label>
+            </div>
+            <div class="threshold-grid" aria-label="评分阈值">
+              <label>
+                <span>优秀线</span>
+                <input id="thresholdExcellent" type="number" min="1" max="100" step="1" value="90" />
+              </label>
+              <label>
+                <span>合格线</span>
+                <input id="thresholdPass" type="number" min="1" max="100" step="1" value="75" />
+              </label>
+            </div>
+          </div>
+          <div class="eval-actions">
+            <button id="runEvalBtn" class="primary-btn compact-btn" type="button">运行评测</button>
+            <button id="compareEvalBtn" class="ghost-btn compact-btn" type="button">对比评测</button>
+            <button id="exportEvalBtn" class="ghost-btn compact-btn" type="button" disabled>导出报告</button>
+          </div>
         </section>
       </aside>
 
@@ -95,6 +136,7 @@
               <strong id="evaluationScore">-</strong>
             </div>
           </div>
+          <div id="compareList" class="compare-list"></div>
           <div id="dimensionList" class="dimension-list"></div>
           <div id="scenarioList" class="scenario-list"></div>
         </section>

@@ -71,10 +71,29 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             mode = str(payload.get("mode") or "rule")
             variables = payload.get("variables") or {}
+            settings = payload.get("settings") or {}
             report = EVALUATOR.run(
                 task_id=task_id,
                 mode=mode,
                 variables={key: str(value) for key, value in variables.items()},
+                settings=settings,
+            )
+            self._json(report)
+            return
+        if path == "/api/evaluations/compare":
+            payload = self._read_json()
+            task_id = payload.get("task_id") or None
+            if task_id and task_id not in TASKS:
+                self._json({"error": "unknown task_id"}, 400)
+                return
+            modes = payload.get("modes") or ["rule", "llm"]
+            variables = payload.get("variables") or {}
+            settings = payload.get("settings") or {}
+            report = EVALUATOR.compare(
+                task_id=task_id,
+                modes=[str(item) for item in modes],
+                variables={key: str(value) for key, value in variables.items()},
+                settings=settings,
             )
             self._json(report)
             return

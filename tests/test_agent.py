@@ -85,6 +85,37 @@ class AgentEngineTest(unittest.TestCase):
         self.assertTrue(task_report["dimensions"])
         self.assertTrue(task_report["scenarios"][0]["evidence"])
 
+    def test_evaluation_runner_accepts_enterprise_settings(self):
+        runner = EvaluationRunner(self.engine, self.tasks)
+
+        report = runner.run(
+            task_id="rider_flying_leg",
+            mode="rule",
+            settings={
+                "scope": "quick",
+                "weights": {"任务覆盖": 2.0, "可靠性": 1.5},
+                "thresholds": {"excellent": 95, "pass": 80, "risk": 60},
+            },
+        )
+
+        self.assertEqual(report["settings"]["scope"], "quick")
+        self.assertEqual(report["settings"]["weights"]["任务覆盖"], 2.0)
+        self.assertEqual(report["summary"]["scenario_count"], 2)
+        self.assertIn("raw_score", report["summary"])
+
+    def test_evaluation_runner_outputs_comparison_report(self):
+        runner = EvaluationRunner(self.engine, self.tasks)
+
+        report = runner.compare(
+            task_id="rider_flying_leg",
+            modes=["rule", "rule"],
+            settings={"scope": "quick"},
+        )
+
+        self.assertEqual(len(report["comparisons"]), 2)
+        self.assertEqual(report["baseline_mode"], "rule")
+        self.assertIn("reports", report)
+
     def test_llm_config_is_masked_in_session_dict(self):
         session = Session(
             task_id="course_live_upgrade",

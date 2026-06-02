@@ -6,6 +6,8 @@ const state = {
   runtimeMode: "rule",
   sending: false,
   evaluating: false,
+  lastEvaluation: null,
+  lastComparison: null,
 };
 
 const els = {
@@ -25,9 +27,19 @@ const els = {
   sendBtn: document.querySelector("#sendBtn"),
   exportBtn: document.querySelector("#exportBtn"),
   runEvalBtn: document.querySelector("#runEvalBtn"),
+  compareEvalBtn: document.querySelector("#compareEvalBtn"),
+  exportEvalBtn: document.querySelector("#exportEvalBtn"),
+  evalScope: document.querySelector("#evalScope"),
+  weightCoverage: document.querySelector("#weightCoverage"),
+  weightFlow: document.querySelector("#weightFlow"),
+  weightConstraint: document.querySelector("#weightConstraint"),
+  weightReliability: document.querySelector("#weightReliability"),
+  thresholdExcellent: document.querySelector("#thresholdExcellent"),
+  thresholdPass: document.querySelector("#thresholdPass"),
   evaluationBoard: document.querySelector("#evaluationBoard"),
   evaluationConclusion: document.querySelector("#evaluationConclusion"),
   evaluationScore: document.querySelector("#evaluationScore"),
+  compareList: document.querySelector("#compareList"),
   dimensionList: document.querySelector("#dimensionList"),
   scenarioList: document.querySelector("#scenarioList"),
 };
@@ -57,6 +69,28 @@ function valuesFromForm() {
     data[key] = String(value).trim();
   });
   return data;
+}
+
+function evaluationSettings() {
+  return {
+    scope: els.evalScope.value,
+    weights: {
+      任务覆盖: numberValue(els.weightCoverage.value, 1.2),
+      流程控制: numberValue(els.weightFlow.value, 1.2),
+      约束遵守: numberValue(els.weightConstraint.value, 1.0),
+      可靠性: numberValue(els.weightReliability.value, 1.4),
+    },
+    thresholds: {
+      excellent: numberValue(els.thresholdExcellent.value, 90),
+      pass: numberValue(els.thresholdPass.value, 75),
+      risk: 60,
+    },
+  };
+}
+
+function numberValue(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
 function configureRuntime() {
@@ -124,6 +158,8 @@ function updateComposerState() {
   els.composerArea.hidden = !state.session;
   els.startBtn.disabled = state.sending || !state.selectedTask;
   els.runEvalBtn.disabled = state.evaluating || !state.selectedTask;
+  els.compareEvalBtn.disabled = state.evaluating || !state.selectedTask;
+  els.exportEvalBtn.disabled = !state.lastEvaluation && !state.lastComparison;
   els.messageInput.disabled = locked;
   els.sendBtn.disabled = locked;
   els.quickReplies.querySelectorAll("button").forEach((button) => {
@@ -278,6 +314,7 @@ async function runEvaluation() {
   if (!state.selectedTask || state.evaluating) return;
   state.evaluating = true;
   els.runEvalBtn.textContent = "评测中...";
+  state.lastComparison = null;
   updateComposerState();
   try {
     const report = await api("/api/evaluations/run", {
@@ -286,8 +323,10 @@ async function runEvaluation() {
         task_id: state.selectedTask.id,
         mode: mode(),
         variables: valuesFromForm(),
+        settings: evaluationSettings(),
       }),
     });
+    state.lastEvaluation = report;
     renderEvaluation(report);
   } catch (error) {
     els.evaluationBoard.hidden = false;
@@ -302,11 +341,44 @@ async function runEvaluation() {
   }
 }
 
+async function compareEvaluation() {
+  if (!state.selectedTask || state.evaluating) return;
+  state.evaluating = true;
+  els.compareEvalBtn.textContent = "对比中...";
+  updateComposerState();
+  try {
+    const comparison = await api("/api/evaluations/compare", {
+      method: "POST",
+      body: JSON.stringify({
+        task_id: state.selectedTask.id,
+        modes: ["rule", "llm"],
+        variables: valuesFromForm(),
+        settings: evaluationSettings(),
+      }),
+    });
+    state.lastComparison = comparison;
+    state.lastEvaluation = comparison.reports?.[0] || null;
+    renderComparison(comparison);
+  } catch (error) {
+    els.evaluationBoard.hidden = false;
+    els.evaluationScore.textContent = "-";
+    els.evaluationConclusion.textContent = `对比失败：${error.message}`;
+    els.compareList.innerHTML = "";
+    els.dimensionList.innerHTML = "";
+    els.scenarioList.innerHTML = "";
+  } finally {
+    state.evaluating = false;
+    els.compareEvalBtn.textContent = "对比评测";
+    updateComposerState();
+  }
+}
+
 function renderEvaluation(report) {
   const summary = report.summary || {};
   const taskReports = report.task_reports || [];
   const taskReport = taskReports[0] || {};
   els.evaluationBoard.hidden = false;
+  els.compareList.innerHTML = "";
   els.evaluationScore.textContent =
     typeof summary.score === "number" ? `${summary.score}` : "-";
   els.evaluationConclusion.textContent = summary.conclusion || "评测完成";
@@ -326,6 +398,28 @@ function renderEvaluation(report) {
   els.scenarioList.innerHTML = (taskReport.scenarios || [])
     .map((scenario) => renderScenario(scenario))
     .join("");
+}
+
+function renderComparison(comparison) {
+  const reports = comparison.reports || [];
+  const firstReport = reports[0] || {};
+  renderEvaluation(firstReport);
+  els.evaluationConclusion.textContent = comparison.conclusion || "对比评测完成";
+  els.compareList.innerHTML = (comparison.comparisons || [])
+    .map(
+      (item) => `
+        <article class="compare-item">
+          <span>${escapeHtml(modeLabel(item.mode))}</span>
+          <strong>${escapeHtml(item.score)}</strong>
+          <small>${Number(item.delta) >= 0 ? "+" : ""}${escapeHtml(item.delta)}</small>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function modeLabel(value) {
+  return value === "llm" ? "LLM 模式" : "规则基线";
 }
 
 function renderScenario(scenario) {
@@ -372,6 +466,88 @@ function renderScenario(scenario) {
   `;
 }
 
+function exportEvaluationReport() {
+  if (!state.lastEvaluation && !state.lastComparison) return;
+  const content = state.lastComparison
+    ? markdownForComparison(state.lastComparison)
+    : markdownForReport(state.lastEvaluation);
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replaceAll(":", "-");
+  link.href = url;
+  link.download = `evaluation-${state.selectedTask?.id || "all"}-${stamp}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function markdownForComparison(comparison) {
+  const lines = [
+    "# 自动评测对比报告",
+    "",
+    `结论：${comparison.conclusion || "-"}`,
+    "",
+    "## 模式对比",
+    "",
+    "| 模式 | 分数 | 相对基线 | 结论 |",
+    "| --- | ---: | ---: | --- |",
+    ...(comparison.comparisons || []).map(
+      (item) =>
+        `| ${modeLabel(item.mode)} | ${item.score} | ${Number(item.delta) >= 0 ? "+" : ""}${item.delta} | ${item.conclusion || ""} |`,
+    ),
+    "",
+  ];
+  (comparison.reports || []).forEach((report) => {
+    lines.push(...markdownForReport(report).split("\n"), "");
+  });
+  return lines.join("\n");
+}
+
+function markdownForReport(report) {
+  const summary = report.summary || {};
+  const lines = [
+    `# 自动评测报告 - ${modeLabel(report.mode)}`,
+    "",
+    `总分：${summary.score ?? "-"}`,
+    `原始分：${summary.raw_score ?? "-"}`,
+    `结论：${summary.conclusion || "-"}`,
+    `场景数：${summary.scenario_count ?? "-"}`,
+    `检查项：${summary.passed_count ?? "-"} / ${summary.check_count ?? "-"}`,
+    "",
+    "## 维度分",
+    "",
+    "| 维度 | 分数 | 权重 | 通过项 |",
+    "| --- | ---: | ---: | ---: |",
+  ];
+  (report.task_reports || []).forEach((taskReport) => {
+    (taskReport.dimensions || []).forEach((item) => {
+      lines.push(
+        `| ${item.name} | ${item.score} | ${item.weight} | ${item.passed_count}/${item.check_count} |`,
+      );
+    });
+  });
+  lines.push("", "## 场景证据", "");
+  (report.task_reports || []).forEach((taskReport) => {
+    lines.push(`### ${taskReport.task_title}`);
+    (taskReport.scenarios || []).forEach((scenario) => {
+      lines.push("", `#### ${scenario.title} (${scenario.score})`, scenario.description);
+      (scenario.evidence || []).forEach((item) => {
+        lines.push(`- 用户：${item.user}`);
+        lines.push(`  坐席：${item.assistant}`);
+        lines.push(`  意图：${item.intent || "-"}`);
+      });
+      const failed = (scenario.checks || []).filter((item) => !item.passed);
+      if (failed.length) {
+        lines.push("  失败项：");
+        failed.forEach((item) => {
+          lines.push(`  - ${item.dimension}/${item.name}: ${item.evidence}`);
+        });
+      }
+    });
+  });
+  return lines.join("\n");
+}
+
 async function boot() {
   const [tasks, llmConfig] = await Promise.all([
     api("/api/tasks"),
@@ -402,6 +578,8 @@ els.messageForm.addEventListener("submit", (event) => {
 });
 els.exportBtn.addEventListener("click", exportTranscript);
 els.runEvalBtn.addEventListener("click", runEvaluation);
+els.compareEvalBtn.addEventListener("click", compareEvaluation);
+els.exportEvalBtn.addEventListener("click", exportEvaluationReport);
 
 boot().catch((error) => {
   els.sessionStatus.textContent = error.message;

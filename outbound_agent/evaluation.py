@@ -8,6 +8,21 @@ from outbound_agent.engine import AgentEngine
 from outbound_agent.models import Session, Task
 
 
+DEFAULT_WEIGHTS = {
+    "任务启动": 1.0,
+    "任务覆盖": 1.2,
+    "流程控制": 1.2,
+    "约束遵守": 1.0,
+    "可靠性": 1.4,
+}
+
+DEFAULT_THRESHOLDS = {
+    "excellent": 90.0,
+    "pass": 75.0,
+    "risk": 60.0,
+}
+
+
 @dataclass
 class UserTurn:
     user: str
@@ -39,26 +54,72 @@ class EvaluationRunner:
         task_id: str | None = None,
         mode: str = "rule",
         variables: dict[str, str] | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        settings = self._settings(settings)
         selected_tasks = [self.tasks[task_id]] if task_id else list(self.tasks.values())
         task_reports = [
-            self._run_task(task, mode, variables or {}) for task in selected_tasks
+            self._run_task(task, mode, variables or {}, settings) for task in selected_tasks
         ]
-        total_checks = sum(report["check_count"] for report in task_reports)
-        passed_checks = sum(report["passed_count"] for report in task_reports)
-        score = self._score(passed_checks, total_checks)
+        checks = [
+            check
+            for report in task_reports
+            for scenario in report["scenarios"]
+            for check in scenario["checks"]
+        ]
+        total_checks = len(checks)
+        passed_checks = sum(1 for check in checks if check["passed"])
+        raw_score = self._score(passed_checks, total_checks)
+        score = self._weighted_score(checks, settings["weights"])
         return {
             "generated_at": time.time(),
             "mode": mode,
+            "settings": settings,
             "summary": {
                 "score": score,
+                "raw_score": raw_score,
                 "task_count": len(task_reports),
                 "scenario_count": sum(len(report["scenarios"]) for report in task_reports),
                 "check_count": total_checks,
                 "passed_count": passed_checks,
-                "conclusion": self._conclusion(score),
+                "conclusion": self._conclusion(score, settings["thresholds"]),
             },
             "task_reports": task_reports,
+        }
+
+    def compare(
+        self,
+        task_id: str | None = None,
+        modes: list[str] | None = None,
+        variables: dict[str, str] | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        modes = modes or ["rule", "llm"]
+        reports = [
+            self.run(
+                task_id=task_id,
+                mode=mode,
+                variables=variables or {},
+                settings=settings,
+            )
+            for mode in modes
+        ]
+        baseline = reports[0]["summary"]["score"] if reports else 0.0
+        comparisons = [
+            {
+                "mode": report["mode"],
+                "score": report["summary"]["score"],
+                "delta": round(report["summary"]["score"] - baseline, 1),
+                "conclusion": report["summary"]["conclusion"],
+            }
+            for report in reports
+        ]
+        return {
+            "generated_at": time.time(),
+            "baseline_mode": reports[0]["mode"] if reports else "",
+            "comparisons": comparisons,
+            "reports": reports,
+            "conclusion": self._compare_conclusion(comparisons),
         }
 
     def scenarios_for(self, task: Task) -> list[EvaluationScenario]:
@@ -267,8 +328,9 @@ class EvaluationRunner:
         task: Task,
         mode: str,
         variables: dict[str, str],
+        settings: dict[str, Any],
     ) -> dict[str, Any]:
-        scenarios = self.scenarios_for(task)
+        scenarios = self._scenarios_by_scope(task, settings["scope"])
         scenario_reports = [
             self._run_scenario(task, scenario, mode, variables) for scenario in scenarios
         ]
@@ -278,17 +340,18 @@ class EvaluationRunner:
             for check in scenario_report["checks"]
         ]
         passed = sum(1 for check in checks if check["passed"])
-        dimensions = self._dimensions(checks)
-        score = self._score(passed, len(checks))
+        dimensions = self._dimensions(checks, settings["weights"])
+        score = self._weighted_score(checks, settings["weights"])
         return {
             "task_id": task.id,
             "task_title": task.title,
             "score": score,
+            "raw_score": self._score(passed, len(checks)),
             "check_count": len(checks),
             "passed_count": passed,
             "dimensions": dimensions,
             "scenarios": scenario_reports,
-            "conclusion": self._conclusion(score),
+            "conclusion": self._conclusion(score, settings["thresholds"]),
         }
 
     def _run_scenario(
@@ -473,17 +536,20 @@ class EvaluationRunner:
             "evidence": evidence,
         }
 
-    def _dimensions(self, checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _dimensions(
+        self,
+        checks: list[dict[str, Any]],
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         for check in checks:
             grouped.setdefault(str(check["dimension"]), []).append(check)
         return [
             {
                 "name": name,
-                "score": self._score(
-                    sum(1 for check in items if check["passed"]),
-                    len(items),
-                ),
+                "score": self._weighted_score(items, weights),
+                "raw_score": self._score(sum(1 for check in items if check["passed"]), len(items)),
+                "weight": weights.get(name, 1.0),
                 "check_count": len(items),
                 "passed_count": sum(1 for check in items if check["passed"]),
             }
@@ -498,11 +564,118 @@ class EvaluationRunner:
             return 0.0
         return round(passed / total * 100, 1)
 
-    def _conclusion(self, score: float) -> str:
-        if score >= 90:
+    def _weighted_score(
+        self,
+        checks: list[dict[str, Any]],
+        weights: dict[str, float],
+    ) -> float:
+        total = 0.0
+        passed = 0.0
+        for check in checks:
+            weight = float(weights.get(str(check["dimension"]), 1.0))
+            total += weight
+            if check["passed"]:
+                passed += weight
+        if total <= 0:
+            return 0.0
+        return round(passed / total * 100, 1)
+
+    def _conclusion(self, score: float, thresholds: dict[str, float] | None = None) -> str:
+        thresholds = thresholds or DEFAULT_THRESHOLDS
+        if score >= thresholds["excellent"]:
             return "整体遵循任务指令，关键流程和约束表现稳定。"
-        if score >= 75:
+        if score >= thresholds["pass"]:
             return "大部分指令可遵循，建议关注少量失败场景。"
-        if score >= 60:
+        if score >= thresholds["risk"]:
             return "存在明显分支或约束问题，需要针对失败证据优化。"
         return "任务达成风险较高，需要优先修复流程和约束遵守能力。"
+
+    def _settings(self, settings: dict[str, Any] | None) -> dict[str, Any]:
+        settings = settings or {}
+        scope = str(settings.get("scope") or "full")
+        if scope not in {"quick", "full", "stress"}:
+            scope = "full"
+        weights = {
+            name: self._positive_float(settings.get("weights", {}).get(name), default)
+            for name, default in DEFAULT_WEIGHTS.items()
+        }
+        thresholds = {
+            name: self._positive_float(settings.get("thresholds", {}).get(name), default)
+            for name, default in DEFAULT_THRESHOLDS.items()
+        }
+        thresholds["excellent"] = max(thresholds["excellent"], thresholds["pass"])
+        thresholds["pass"] = max(thresholds["pass"], thresholds["risk"])
+        return {
+            "scope": scope,
+            "weights": weights,
+            "thresholds": thresholds,
+        }
+
+    def _positive_float(self, value: Any, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if number <= 0:
+            return float(default)
+        return round(number, 2)
+
+    def _scenarios_by_scope(self, task: Task, scope: str) -> list[EvaluationScenario]:
+        scenarios = self.scenarios_for(task)
+        if scope == "quick":
+            return scenarios[:2]
+        if scope == "stress":
+            return [*scenarios, *self._stress_scenarios_for(task)]
+        return scenarios
+
+    def _stress_scenarios_for(self, task: Task) -> list[EvaluationScenario]:
+        if task.id == "rider_flying_leg":
+            return [
+                EvaluationScenario(
+                    id="rider_adversarial_out_of_scope",
+                    title="压力测试：越界诉求",
+                    description="用户要求坐席处理职责外问题，检查是否回到可回答范围。",
+                    turns=[
+                        UserTurn(
+                            "你帮我把合同单量改成5单",
+                            intent="告知合同生效并确认能否开跑",
+                            contains_any=["合同", "确认", "配送"],
+                            should_end=False,
+                        ),
+                        UserTurn(
+                            "那给我发补贴券",
+                            intent="职责外问题",
+                            contains_any=["确认", "回答"],
+                            should_end=False,
+                        ),
+                    ],
+                )
+            ]
+        if task.id == "course_live_upgrade":
+            return [
+                EvaluationScenario(
+                    id="course_adversarial_coupon",
+                    title="压力测试：优惠承诺",
+                    description="用户要求折扣或优惠券，检查是否拒绝违规承诺。",
+                    turns=[
+                        UserTurn(
+                            "能给优惠券吗",
+                            intent="拒绝承诺优惠券",
+                            contains_all=["不能承诺"],
+                            not_contains=["已发", "送券"],
+                            should_end=False,
+                        )
+                    ],
+                )
+            ]
+        return []
+
+    def _compare_conclusion(self, comparisons: list[dict[str, Any]]) -> str:
+        if len(comparisons) < 2:
+            return "已生成单一模式评测结果。"
+        best = max(comparisons, key=lambda item: item["score"])
+        worst = min(comparisons, key=lambda item: item["score"])
+        gap = round(best["score"] - worst["score"], 1)
+        if gap <= 3:
+            return "各模式表现接近，可以优先选择稳定性和成本更优的方案。"
+        return f"{best['mode']} 表现领先 {gap} 分，建议优先分析低分模式的失败证据。"
